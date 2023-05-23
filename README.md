@@ -49,13 +49,15 @@ You can give these 3 files in 2 different ways to fart-init:
 - Over the cloud-init option in Proxmox (VM -> Cloud-init -> Edit -> Regenerate)
 - Over a webserver reacheable from the VM
 
-*** CAVEATS: Proxmox is a linux server and their password hashing is different from the one we use in OpenBSD, so the password given
+> **Warning**
+> Proxmox is a linux server and their password hashing is different from the one we use in OpenBSD, so the password given
 over Proxmox for the user won't work, use the ssh-key instead and set up a root password inside fart-init, or just use the default one
 for root which is "fart-init"
 
 If you will serve the files by Proxmox just fill the "Cloud-init" information as you want and regenerate it, that should be enough, if you
 want to serve the files over a webserver, they should look like this:
 
+user-data:
 ```
 $ cat user-data
 #cloud-config
@@ -67,13 +69,14 @@ chpasswd:
   expire: False
 ```
 
+meta-data:
 ```
 $ cat meta-data
 instance-id: 999/fart-init
 local-hostname: fart-init
 ```
 
-network-data - dhcp
+network-data - dhcp:
 ```
 $ cat network-data
 version: 1
@@ -89,7 +92,8 @@ config:
       search:
       - 'fart.home'
 ```
-network-data - static
+
+network-data - static:
 ```
 $ cat network-data
 version: 1
@@ -142,10 +146,10 @@ issues but this could change in yours.
 
 During the first booting process you will see something like this:
 
-![alt text](https://github.com/gonzalo-/fart-init/blob/main/imgs/fart-init_booting.png?raw=true)
+![alt text](https://github.com/gonzalo-/fart-init/blob/main/img/fart-init_booting.png?raw=true)
 
 And on the second boot:
 
-![alt text](https://github.com/gonzalo-/fart-init/blob/main/imgs/fart-init_booted.png?raw=true)
+![alt text](https://github.com/gonzalo-/fart-init/blob/main/img/fart-init_booted.png?raw=true)
 
 Have fun!
