@@ -1,0 +1,247 @@
+#!/bin/sh
+
+# Copyright (c) 2023 gonzalo@x61.sh
+
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+SHELL=/bin/sh
+PATH=/bin:/sbin:/usr/bin:/usr/sbin:/usr/local/sbin
+
+### Deploy me.
+## cd /usr/local/sbin/
+## ftp http://10.0.2.2:8000/fart-init
+## chmod 755 fart-init
+## echo '/usr/local/sbin/fart-init 2>&1 | tee /var/log/fart-init.log' > /etc/rc.local
+
+FART_SRV="10.0.2.2:8000"
+CDROM=$(dmesg | grep 'QEMU DVD-ROM' | uniq | awk '{print $1}')
+YO=/usr/local/sbin/fart-init
+PING_WWW=$(ping -c1 -w1 google.com | wc -l)
+PING=$(ping -c1 -w1 "${FART_SRV}" | wc -l)
+NET_FILE=/tmp/network-config
+USR_FILE=/tmp/user-data
+MET_FILE=/tmp/meta-data
+
+## Check root 
+if test "$(whoami)" != root; then
+        doas "$0" "$@"
+        exit $?
+fi
+
+## Debug
+#set -x
+
+logo() {
+cat << "EOF"
+
+  /$$$$$$                      /$$          /$$           /$$   /$$    
+ /$$__  $$                    | $$         |__/          |__/  | $$    
+| $$  \__//$$$$$$   /$$$$$$  /$$$$$$        /$$ /$$$$$$$  /$$ /$$$$$$  
+| $$$$   |____  $$ /$$__  $$|_  $$_//$$$$$$| $$| $$__  $$| $$|_  $$_/  
+| $$_/    /$$$$$$$| $$  \__/  | $$ |______/| $$| $$  \ $$| $$  | $$    
+| $$     /$$__  $$| $$        | $$ /$$     | $$| $$  | $$| $$  | $$ /$$
+| $$    |  $$$$$$$| $$        |  $$$$/     | $$| $$  | $$| $$  |  $$$$/
+|__/     \_______/|__/         \___/       |__/|__/  |__/|__/   \___/  
+
+EOF
+}
+
+info() {
+	echo 'printf "\n\n:.: FART-INIT INFO\n"' >> /etc/rc.firsttime
+	echo 'printf "\n:. My name: `hostname`\n"' >> /etc/rc.firsttime
+	echo 'printf ":. My ip: `ifconfig vio0 | grep inet | awk '\''{print $2}'\''`\n"' >> /etc/rc.firsttime
+	echo 'printf ":. My gw: `route -n show | grep default | awk '\''{print $2}'\''`\n"' >> /etc/rc.firsttime
+	echo 'printf "\n\n### Check my log /var/log/fart-init.log for more info ###\n\n"' >> /etc/rc.firsttime
+}
+
+logo
+
+## Handling errors
+error() {
+	echo "Error: $1" >&2
+	exit 1
+}
+
+## We add the ssh-key for remote login
+ssh_key() {
+	printf ":.: Setting SSH key for the main user...\n"
+	SSHPUB=$(grep ssh- "${USR_FILE}" | cut -d'-' -f2,3 | sed "s/^[ \t]*//")
+	mkdir -p /home/"${USR}"/.ssh
+	mkdir -p /root/.ssh
+	echo "${SSHPUB}" >> /home/"${USR}"/.ssh/authorized_keys
+	echo "${SSHPUB}" >> /root/.ssh/authorized_keys
+}
+
+## Let's check first if we have a cdrom with
+## the cloud-init files
+if [ "${CDROM}" -eq "cd0" ]; then
+	printf ":.: We have a CDROM. Are we running on QEMU or Proxmox? Mounting ${CDROM}\n"
+	if mount /dev/"${CDROM}"a /mnt; then
+		if [ -f "/mnt/user-data" ]; then
+			printf ":.: Found cloud-init files. Copying them...\n"
+			cp /mnt/{meta-data,network-config,user-data} /tmp || exit 1
+			umount /mnt
+		else
+			printf ":.: No user-data in ${CDROM}. Trying network initialization...\n"
+		fi
+	else
+		error "Failed to mount ${CDROM}. No cloud-init information in the CDROM"
+	fi
+else
+	printf ":.: No CDROM found. Checking network access...\n"
+	if [ "${PING}" -lt 1 ]; then
+		printf "[+] No local server connection.\n"
+		exit 2
+	else
+		printf ":.: Access to local server available.\n"
+		## We download the cloud-init files
+		printf ":.: Downloading cloud-init files from "${FART_SRV}"...\n"
+		cd /tmp && \
+		ftp -V http://"${FART_SRV}"/meta-data || error "No meta-data file in the server"
+		ftp -V http://"${FART_SRV}"/user-data || error "No user-data file in the server"
+		ftp -V http://"${FART_SRV}"/network-config
+	fi
+fi
+
+## Delete everything just-in-case
+# packages
+if [ "${PING_WWW}" -lt 1 ]; then
+	printf "[+] No internet connection.\n"
+else
+	printf ":.: Installing sysclean...\n"
+	pkg_add sysclean
+	# Extra files
+	printf ":.: Adding myself to /etc/sysclean.ignore...\n"
+	echo "${YO}" > /etc/sysclean.ignore
+	printf ":.: Deleting garbage with sysclean...\n"
+	sysclean -a | xargs rm -rf
+	rm /etc/sysclean.ignore
+fi
+
+printf ":.: Deleting packages and residual files...\n"
+pkg_delete -cqqxX /var/db/pkg/*-firmware-[0-9]* >/dev/null
+rm -rf /usr/local/{.[!.],}* /var/db/pkg/{.[!.],}* /usr/ports/pobj \
+        /usr/ports/distfiles/* /usr/ports/packages/*
+mtree -qdef /etc/mtree/4.4BSD.dist -p / -U > /dev/null 2>&1
+mtree -qdef /etc/mtree/BSD.x11.dist -p / -U > /dev/null 2>&1
+ln -sf /etc/X11/app-defaults /usr/local/lib/X11/app-defaults > /dev/null 2>&1
+ldconfig -RU > /dev/null 2>&1
+
+# ssh keys
+printf ":.: Deleting previous ssh keys and files...\n"
+rm -v /etc/ssh/ssh_host_*
+rm -v /etc/random.seed
+rm -v /var/db/host.random
+rm -v /etc/isakmpd/local.pub
+rm -v /etc/isakmpd/private/local.key
+rm -v /etc/iked/private/local.key
+rm -v /etc/iked/local.pub
+
+## We want to be god
+printf ":.: Setting a basic /etc/doas.conf file...\n"
+echo 'permit keepenv :wheel' > /etc/doas.conf
+
+## We set a nice root passwd
+printf ":.: Setting default root password...\n"
+## which is 'fart-init'
+## change it by doing: echo YourPassWord | encrypt
+## and put the hash between 'root:' and ':0:0'
+chpass -a 'root:$2b$10$ywl6wTuA8L7Z1yHIU7n8S.ZptV2GDHA8THYX65HV9imc8HStW7Lam:0:0:daemon:0:0:Charlie &:/root:/bin/ksh'
+
+## We need a resolver
+printf ":.: Enabling unwind as resolver...\n"
+rcctl enable unwind > /dev/null 2>&1
+rcctl start unwind > /dev/null 2>&1
+## We don't need sound
+rcctl disable sndiod > /dev/null 2>&1
+
+## Fun starts
+printf ":.: Setting hostname...\n"
+LOCAL_HOSTNAME=$(grep hostname "${USR_FILE}" | cut -d':' -f2 | tr -d '[:blank:]')
+if [ -n "${LOCAL_HOSTNAME}" ]; then
+	echo "${LOCAL_HOSTNAME}" > /etc/myname
+else
+	## if there is no hostname
+	## we generate some random one
+	openssl rand -base64 15 | sed 's/[^[:alnum:]]//g' | cut -c -10 > /etc/myname
+fi
+
+## We create new key for next boot
+printf ":.: Setting the creating of ssh-keys on next boot...\n"
+echo 'ssh-keygen -A' >> /etc/rc.firsttime
+
+## We create the main usr/pass
+USR=$(grep -E 'user:|username:' "${USR_FILE}" | awk '{print $2}' | tr -d '\047' | head -1)
+printf ":.: Setting the main user...\n"
+if [ -n "${USR}" ]; then
+	PASS=$(cat "${USR_FILE}" | awk '$1=="password:" {print $2}' | tr -d '\047' | head -1)
+	if [ -n "${PASS}" ]; then
+		HASH=$(echo "${PASS}" | encrypt)
+		userdel -r "${USR}"
+		useradd -m -G wheel -s /bin/ksh -p "${HASH}" -L staff "${USR}"
+		ssh_key
+	else
+		printf ":.: No password for the user?\n"
+	fi
+else
+	printf ":.: No regular user set, you should use root instead\n"
+fi
+
+## We setup the networking
+printf ":.: Setting up the network\n"
+if [ -f "${NET_FILE}" ]; then
+	DHCP=$(grep dhcp "${NET_FILE}" | wc -l)
+	if [ "${DHCP}" -eq "1" ]; then
+		printf ":.: We'll use dhcp on vio0\n"
+		echo 'inet autoconf' > /etc/hostname.vio0
+	else
+		printf ":.: We'll use static IP on vio0\n"
+		ST_IP=$(cat "${NET_FILE}" | awk '$1=="address:" {print $2}' | tr -d '\047' | head -1)
+		MASK=$(cat "${NET_FILE}" | awk '$1=="netmask:" {print $2}' | tr -d '\047' | head -1)
+		GW=$(cat "${NET_FILE}" | awk '$1=="gateway:" {print $2}' | tr -d '\047' | head -1)
+		echo inet "${ST_IP}" "${MASK}" > /etc/hostname.vio0 || exit 1
+		echo "${GW}" > /etc/mygate || exit 1
+	fi
+else
+	printf ":.: No network file, I will set dhcp...\n"
+	echo 'inet autoconf' > /etc/hostname.vio0
+fi
+
+## Final clean-up
+printf ":.: Deleting everything even myself...\n"
+rm /etc/rc.local /tmp/{meta-data,user-data}
+
+printf ":.: Runing syspatch...\n"
+## Let's install patches just-in-case
+CURRENT=$(sysctl kern.version | grep current | wc -l)
+if [ "${CURRENT}" -eq "1" ]; then
+	printf ":.: This is a -current system, you need to run sysupgrade(8)\n"
+else
+	syspatch
+fi
+
+printf ":.: *** MY LOG IS /var/log/fart-init.log ***\n"
+
+## Show basic info on console after first reboot
+info
+
+printf ":.: Reboot time :)\n"
+## Reboot
+reboot

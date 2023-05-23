@@ -1,0 +1,15 @@
+version: 1
+config:
+    - type: physical
+      name: eth0
+      mac_address: '16:70:0d:8e:dd:a4'
+      subnets:
+      - type: static
+        address: '192.168.0.211'
+        netmask: '255.255.255.0'
+        gateway: '192.168.0.1'
+    - type: nameserver
+      address:
+      - '192.168.0.123'
+      search:
+      - 'fart.home'

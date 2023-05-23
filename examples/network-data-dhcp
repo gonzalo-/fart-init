@@ -1,0 +1,12 @@
+version: 1
+config:
+    - type: physical
+      name: eth0
+      mac_address: '16:70:0d:8e:dd:a4'
+      subnets:
+      - type: dhcp4
+    - type: nameserver
+      address:
+      - '9.9.9.9'
+      search:
+      - 'fart.home'

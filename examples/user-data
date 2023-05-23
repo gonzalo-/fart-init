@@ -1,0 +1,7 @@
+#cloud-config
+hostname: fart-init
+username: gonzalo
+password: puffy01
+ssh-key: "ssh-ed25519 AAAAC3NzaFsTghZaSAAIPxVebz+gL0DqbsikzlMBA0SM059VkOmEGly3b24SnNH"
+chpasswd:
+  expire: False
